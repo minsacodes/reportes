@@ -1,0 +1,434 @@
+---
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+
+# Reporte de la Situación de la Provincias - COVID.
+
+
+## Personal del MINSA a los que se entrega:
+
+* Dr. Julio Castro Gómez, Jefe de Gabinete de Asesores. 
+
+
+* Elaborado por: Dr. José Manuel Magallanes, Consultor en Gestión de la Información. 
+
+
+## Período de Reporte:
+
+Semana anterior al `r format(Sys.Date(), "%d %b %Y")` 
+
+
+## Datos utilizados y fuentes:
+
+* CASOS POSITIVOS (Usando todo caso positivo registrado). Fuente: [Datos Abiertos para Casos del MINSA](https://www.datosabiertos.gob.pe/dataset/casos-positivos-por-covid-19-ministerio-de-salud-minsa).
+
+* VACUNACION. Fuente: [Datos Abiertos para Vacunación del MINSA](https://www.datosabiertos.gob.pe/dataset/vacunaci%C3%B3n-contra-covid-19-ministerio-de-salud-minsa).
+
+* CAMAS COVID (medido en porcentaje disponible - solo Adultos).  Fuente: [Datos Abiertos para Camas de Susalud](http://datos.susalud.gob.pe/dataset/data-hist%C3%B3rica-del-registro-de-camas-diarias-disponibles-y-ocupadas-del-formato-f5002-v2).
+
+* OXIGENO (medido en dias disponible). Fuente: [Datos Abiertos para Oxigeno de En REUNIS](https://drive.minsa.gob.pe/s/Ej4bNHLyXKwqtko).
+
+* FALLECIDOS. Se ha identificado a las provincias más **AFECTADAS** por la pandemia. Fuentes: [Datos abiertos de fallecidos covid](https://www.datosabiertos.gob.pe/dataset/fallecidos-por-covid-19-ministerio-de-salud-minsa) y [SINADEF](https://cloud.minsa.gob.pe/s/NctBnHXDnocgWAg).
+
+
+* HOSPITALIZACION (Medido como ascensos/descensos de hospitalizacion por COVID) . Fuente: [Datos Abiertos](https://www.datosabiertos.gob.pe/dataset/hospitalizados-vacunados-y-fallecidos-por-covid-19).
+
+## Unidad de Análisis
+
+* Provincia del Perú (196).
+
+\pagebreak
+
+## CONSIDERACIONES
+
+
+1. Este reporte busca identificar problemas y alarmas, pero la información entregada tiene límites a su validez dado la calidad y retraso de los datos utilizados.
+
+2. Estos datos **no** incluyen la información de la semana actual.
+
+3. La categorización de las provincias sigue el modelo que se utiliza para clasificar las provincias pero **NO debe ser usado** para tal fin, sino  para comparar con los resultados oficiales que elabore el CDC-MINSA.
+
+4. Los resultados aquí obtenidos **varían** con el paso de las horas, por lo que es dificil replicar los resultados. Se espera que los valores no difieran sustancialmente durante el día, pero podrían variar durante la semana.
+
+5. La información de Camas y Oxigeno depende del cumplimiento de cada IPRESS en el llenado de la información. 
+
+
+
+
+\pagebreak
+
+# I. PROVINCIAS MAS **AFECTADAS** EN TERMINO DE FALLECIDOS
+
+```{r, message=FALSE, echo=FALSE,warning=FALSE}
+options(knitr.table.format = "pdf") 
+rm(list = ls())
+library(magrittr)
+library(kableExtra)
+library(sf)
+library(ggplot2)
+allData=readRDS("vacuOxCamInci.rds")
+provMap=read_sf("PROVINCIAS_peru.json")
+border=read_sf("borderPeru.geojson")
+provMap[provMap$PROV2=="ANTONIO RAIMONDI","PROV2"]="ANTONIO RAYMONDI"
+provMap=merge(provMap,allData, by.x="PROV2",by.y="PROVINCIA")
+tablaBadMorta=allData[allData$Mortalidad=="Afectada",c("DEPARTAMENTO","PROVINCIA")]
+##
+tablaBadMorta=tablaBadMorta[order(tablaBadMorta$DEPARTAMENTO,tablaBadMorta$PROVINCIA),]
+row.names(tablaBadMorta)=NULL
+
+###
+
+lowVac=c("<=10","11-20","21-40","41-50")
+```
+
+Una provincia ha sido considerada como afectada en fallecidos si cumple al menos uno de estos requisitos:
+
+- Provincia cuya **conteo** de fallecidos por covid está dentro del 20% superior. 
+
+- Provincias cuya **tasa** de mortalidad por covid está dentro del 20% superior.
+
+- Si la **razón** de fallecidos covid y pre-covid supera 1.5.
+
+
+```{r, message=FALSE, echo=FALSE,fig.align='center',fig.align='center',fig.height=7.5,warning=FALSE}
+base=ggplot(data=border) + 
+     geom_sf(color="blue",fill=NA,size=0.25) + 
+     theme_bw() + 
+     theme(plot.title = element_text(hjust = 0.5,
+                                     face = "bold",
+                                     colour = "blue"),
+           strip.text.x = element_text(face = "bold",
+                                       colour = "black"),
+           strip.text.y = element_text(face = "bold",
+                                       colour = "black"),
+           panel.grid.major = element_blank(),
+panel.grid.minor = element_blank())
+base + geom_sf(data=provMap[provMap$Mortalidad=="Afectada",],fill='grey80',color='white') + ggrepel::geom_text_repel(data=provMap[provMap$Mortalidad=="Afectada",],
+    aes(label = PROV2, geometry = geometry),
+    stat = "sf_coordinates",size=1.5,fontface='bold',
+    min.segment.length = 0
+  ) + labs(title = "Provincias más afectadas por fallecimientos COVID-19\nEn comparación al 2017-2019.", subtitle = paste0("Cantidad de Provincias: ",nrow(tablaBadMorta)))
+```
+
+\pagebreak
+
+# II. REZAGOS EN LA VACUNACION
+
+Aquí analizamos el cruce de los proporción de personas vacunadas entre el total de la población de la provincia, versus el total de vacunados con 40 o más años entre la población con 40 o más años.
+
+## Comparando coberturas:
+
+```{r, message=FALSE, echo=FALSE, warning=FALSE}
+tttt=table(allData$Vacuna,allData$Vacuna40) %>%addmargins()
+tttt=as.data.frame.matrix(tttt)
+tttt=cbind(rownames(tttt),tttt)
+names(tttt)[1]="% Poblacion Total - % 40 o más "
+rownames(tttt)=NULL
+
+kbl(tttt,longtable = T,caption = "Vacunación: Poblacion Total versus Población mayor a 40 años")
+#%>%  kable_paper(bootstrap_options = "striped", full_width = F)
+```
+
+
+\pagebreak
+
+```{r, message=FALSE, echo=FALSE,fig.align='center',fig.height=10, warning=FALSE}
+
+tempVac=provMap[provMap$Vacuna%in%lowVac,]
+base + geom_sf(data=tempVac,fill='grey80',color='white') + ggrepel::geom_text_repel(data=tempVac,
+    aes(label = PROV2, geometry = geometry),
+    stat = "sf_coordinates",size=2,fontface='bold',
+    min.segment.length = 0
+  ) + labs(title = "Provincias con MENOS del 50% de vacunacion\n(De la población total de su provincia)",
+           subtitle = paste("Total: ",nrow(tempVac),"Provincias"),caption = "Población Total: Todas las edades según RENIEC.")
+```
+
+\pagebreak
+
+
+```{r, message=FALSE, echo=FALSE,fig.align='center',fig.height=10, warning=FALSE}
+
+tempVac=provMap[provMap$Vacuna40%in%lowVac,]
+base + geom_sf(data=tempVac,fill='grey90',color='white') + ggrepel::geom_text_repel(data=tempVac,
+    aes(label = PROV2, geometry = geometry),
+    stat = "sf_coordinates",size=2,fontface='bold',
+    min.segment.length = 0, color='purple'
+  ) + labs(title = "Provincias con MENOS del 50% de vacunacion\n(De la población MAYOR a 40 años de su provincia)",
+           subtitle = paste("Total: ",nrow(tempVac),"Provincias"),caption = "Población MAYOR a 40 años: Según RENIEC.")
+```
+
+\pagebreak
+
+```{r, message=FALSE, echo=FALSE,fig.align='center',fig.height=10, warning=FALSE}
+lowVac=c("<=10","11-20","21-40")
+tempVac=provMap[provMap$Vacuna40%in%lowVac & provMap$Vacuna%in%lowVac,]
+base + geom_sf(data=tempVac,fill='grey90',color='white') + ggrepel::geom_text_repel(data=tempVac,
+    aes(label = PROV2, geometry = geometry),
+    stat = "sf_coordinates",size=2,fontface='bold',
+    min.segment.length = 0,color='red'
+  ) + labs(title = "Provincias que no sobrepasan el 50% de vacunacion\n(Ni de la TOTAL ni de la MENOR de 40 años)",
+           subtitle = paste("Total: ",nrow(tempVac),"Provincias"))
+```
+
+\pagebreak
+
+# III. DISPONIBILIDAD DE CAMAS
+
+Se observa a la fecha de entrega los siguientes problemas:
+
+```{r,echo=FALSE}
+camas=readRDS("beds.rds")
+numIpress=nrow(camas)
+
+camaslate=camas[camas$semanas_retraso>1,]
+camaslate=camaslate[complete.cases(camaslate),]
+numIpresslate=nrow(camaslate)
+```
+* Las IPRESS que reportan **CAMAS COVID** son `r numIpress`. Sin embargo hay `r numIpresslate` IPRESS que no actualizado en la ultima semana (solo hemos contabilizado retrazos de mas de una semana):
+```{r, echo=FALSE}
+library(magrittr)
+library(kableExtra)
+camaslate=camaslate[,c("CODIGO","INSTITUCIÓN","semanas_retraso")]
+
+camaslate=camaslate[order(-camaslate$semanas_retraso),]
+rownames(camaslate)=NULL
+camaslate%>%pander::pander()
+
+```
+\pagebreak
+```{r, message=FALSE,echo=FALSE,fig.align='center',fig.height=10, warning=FALSE}
+#table(provMap$Camas)
+BAJO_cama=c("50pct o Menos")
+tempCAMlow=provMap[provMap$Camas%in%BAJO_cama,]
+base + geom_sf(data=tempCAMlow,fill="grey90",color=NA) + ggrepel::geom_text_repel(data=tempCAMlow,
+    aes(label = PROV2, geometry = geometry),
+    stat = "sf_coordinates",size=2,fontface='bold',
+    min.segment.length = 0, color="purple"
+  ) + labs(title = "Provincias con menos de 50% de Camas Covid disponibles",
+           subtitle = paste0(nrow(tempCAMlow)," Provincias"))
+#+ scale_fill_manual(values = c("grey",'orange',"lightblue",'green'))
+```
+\pagebreak
+
+```{r, message=FALSE,echo=FALSE,fig.align='center',fig.height=10, warning=FALSE}
+#table(provMap$Camas)
+SIN_cama=c("SIN camas COVID")
+tempCAMsin=provMap[provMap$Camas%in%SIN_cama,]
+base + geom_sf(data=tempCAMsin,fill="grey90",color=NA) + ggrepel::geom_text_repel(data=tempCAMsin,
+    aes(label = PROV2, geometry = geometry),
+    stat = "sf_coordinates",size=2,fontface='bold',
+    min.segment.length = 0, color="red"
+  ) + labs(title = "Provincias SIN Camas Covid",
+           subtitle = paste0(nrow(tempCAMsin)," Provincias"))
+#+ scale_fill_manual(values = c("grey",'orange',"lightblue",'green'))
+```
+
+\pagebreak
+
+# IV. DISPONIBILIDAD DE OXIGENO
+
+```{r,echo=FALSE}
+o2=readRDS("o2all.rds")
+numIpress=nrow(o2)
+
+o2late=o2[o2$semanas_retraso>1,]
+o2late=o2late[complete.cases(o2late),]
+numIpresslate=nrow(o2late)
+```
+
+* Las IPRESS que reportan **OXIGENO** covid son `r numIpress`. Hay `r numIpresslate` IPRESS que no han actualizado en la ultima semana (solo hemos contabilizado retrazos de mas de una semana).
+```{r, echo=FALSE, eval=FALSE}
+
+o2late=o2late[,c("CODIGO","INSTITUCIÓN","semanas_retraso")]
+
+
+o2late=o2late[order(-o2late$semanas_retraso),]
+rownames(o2late)=NULL
+o2late%>%pander::pander()
+```
+
+```{r, message=FALSE, echo=FALSE, warning=FALSE}
+tttt=table(o2$semaforo2) %>%addmargins()
+tttt=as.data.frame(tttt)
+names(tttt)=c("Disponibilidad", "Cantidad de Ipress")
+
+rownames(tttt)=NULL
+
+kbl(tttt,longtable = T,caption = "Situación de Oxigeno en IPRESS")
+#%>%  kable_paper(bootstrap_options = "striped", full_width = F)
+```
+
+```{r, message=FALSE, echo=FALSE, warning=FALSE}
+tttt=table(allData$O2) %>%addmargins()
+tttt=as.data.frame(tttt)
+names(tttt)=c("Disponibilidad", "Cantidad de Provincias")
+
+rownames(tttt)=NULL
+
+kbl(tttt,longtable = T,caption = "Situación de Oxigeno en Provincias")
+#%>%  kable_paper(bootstrap_options = "striped", full_width = F)
+```
+* **Sin Información**: Esa provincia no tiene IPRESS que reportan disponibilidad de oxigeno.
+
+\pagebreak
+
+```{r, message=FALSE,echo=FALSE,fig.align='center',fig.height=10, warning=FALSE}
+#table(provMap$O2)
+BAJO_o2=c("Sin Información")
+tempOXIlow=provMap[provMap$O2%in%BAJO_o2,]
+base + geom_sf(data=tempOXIlow,fill="grey90",color=NA) + ggrepel::geom_text_repel(data=tempOXIlow,
+    aes(label = PROV2, geometry = geometry),
+    stat = "sf_coordinates",size=2,fontface='bold',
+    min.segment.length = 0, color="black"
+  ) + labs(title = "Provincias donde NO se OFRECE Oxigeno",
+           subtitle = paste0(nrow(tempOXIlow)," Provincias")) 
+
+```
+\pagebreak
+
+```{r, message=FALSE,echo=FALSE,fig.align='center',fig.height=10, warning=FALSE}
+#table(provMap$O2)
+BAJO_o2=c("Sin O2","Menos de 3 dias","3 a 7 dias")
+tempOXIlow=provMap[provMap$O2%in%BAJO_o2,]
+base + geom_sf(data=tempOXIlow,aes(fill=O2),color=NA) + ggrepel::geom_text_repel(data=tempOXIlow,
+    aes(label = PROV2, geometry = geometry),
+    stat = "sf_coordinates",size=2,fontface='bold',
+    min.segment.length = 0, color="black"
+  ) + labs(title = "Provincias con PROBLEMAS de Oxigeno",
+           subtitle = paste0(nrow(tempOXIlow)," Provincias")) + scale_fill_manual(values = c("orange",'pink','lightblue'))+ theme(legend.position = "bottom")
+
+```
+\pagebreak
+
+```{r, message=FALSE,echo=FALSE,fig.align='center',fig.height=10, warning=FALSE}
+#table(provMap$O2)
+BAJO_o2=c("8 a 14 dias", "2 semanas o mas")
+tempOXIlow=provMap[provMap$O2%in%BAJO_o2,]
+base + geom_sf(data=tempOXIlow,aes(fill=O2),color=NA) + ggrepel::geom_text_repel(data=tempOXIlow,
+    aes(label = PROV2, geometry = geometry),
+    stat = "sf_coordinates",size=2,fontface='bold',
+    min.segment.length = 0, color="black"
+  ) + labs(title = "Provincias CON DISPONIBILIDAD de Oxigeno",
+           subtitle = paste0(nrow(tempOXIlow)," Provincias")) + scale_fill_manual(values = c("green","yellow")) + theme(legend.position = "bottom")
+
+```
+
+\pagebreak
+
+# V. PROVINCIAS CON INCREMENTO DE HOSPITALIZACIONES POR COVID
+
+```{r, message=FALSE, echo=FALSE, warning=FALSE}
+tttt=table(allData$Subidas_Hospi) %>%addmargins()
+tttt=as.data.frame(tttt)
+names(tttt)=c("Semanas", "Provincias")
+
+rownames(tttt)=NULL
+
+kbl(tttt,longtable = T,caption = "Semanas aumento/disminución de hospitalizaciones en Provincias")
+#%>%  kable_paper(bootstrap_options = "striped", full_width = F)
+```
+
+
+\pagebreak
+
+```{r, message=FALSE, echo=FALSE,fig.align='center',fig.height=10, warning=FALSE}
+badWeeks=as.numeric(names(table(allData$Subidas_Hospi)))
+badWeeks=badWeeks[!is.na(badWeeks) & badWeeks>0]
+tempHosp=provMap[provMap$Subidas_Hospi%in%badWeeks,]
+base + geom_sf(data=tempHosp,color='white',aes(fill=Subidas_Hospi)) + ggrepel::geom_text_repel(data=tempHosp,
+    aes(label = PROV2, geometry = geometry),
+    stat = "sf_coordinates",size=2,fontface='bold',
+    min.segment.length = 0
+  ) + labs(title = "Semanas de ascenso de Hospitalización",
+           subtitle = paste(nrow(tempHosp),"Provincias"),fill="Semanas en subida") + scale_fill_manual(values = c("grey",'orange','green')) + theme(legend.position = "bottom")
+```
+\pagebreak
+
+
+```{r, message=FALSE, fig.height=10, echo=FALSE,fig.align='center', warning=FALSE, eval=TRUE}
+
+library(dplyr)
+inciSerie=readRDS("hosprov_serie.rds")
+badProv=allData[allData$Subidas_Hospi%in%as.character(c(1:7)),"PROVINCIA"]
+
+inciSerie=inciSerie[inciSerie$PROVINCIA%in%badProv,]
+
+inciSerie$semana=as.numeric(as.character(inciSerie$semana))
+semanaLast=max(inciSerie$semana)
+
+inciSerietxt=inciSerie %>% filter(semana == semanaLast)
+base2=ggplot(data=inciSerie,aes(x=semana,y=hosp_nuevos,color=PROVINCIA)) + theme_classic()
+base2 + geom_line(lwd=1.5, alpha=0.8,linetype="dotted") + guides(color=FALSE) +
+ggrepel::geom_text_repel(data = inciSerietxt, aes(label = PROVINCIA,color = PROVINCIA),fontface = "bold",hjust=0) +  labs(title = "Provincias con hospitalizaciones en ASCENSO",subtitle = "Ascensos más recientes",y="conteo de casos nuevos") + scale_x_continuous(breaks = (semanaLast-7):semanaLast)+ scale_y_continuous(breaks = seq(0,10,2))
+
+```
+
+
+
+# VI. PROVINCIAS A OBSERVAR
+
+Son las que cumplen todas las peores situaciones antes mencionadas:
+
+* Camas: Si provincia NO tiene Camas Covid, o con menos de 50%.
+* Hospitalizaciones: Si provincia está en subida, o si provincia no ofrece camas de hospitalización Covid.
+* Oxigeno: Si provincia NO tiene oxigeno, o tiene a lo más para una semana. 
+
+```{r, echo=FALSE, eval=TRUE, results='asis'}
+lowBed=c("SIN camas COVID","50pct o Menos")
+badHospi=c(as.character(2:7),"Sin Información")
+lowoxi=c("Sin O2", "Menos de 3 dias","3 a 7 dias","Sin Información")
+lowVacu=c("<=10","11-20","21-40","41-50")
+#table(allData$Vacuna40)
+tableFilter=allData[allData$Camas%in%lowBed & allData$Subidas_Hospi%in%badHospi & allData$O2%in%lowoxi,]
+
+row.names(tableFilter) <- NULL
+
+tableFilter$Vacuna = cell_spec(tableFilter$Vacuna,
+                                 bold =ifelse(tableFilter$Vacuna %in%lowVacu, T, F),
+                              color = ifelse(tableFilter$Vacuna %in%lowVacu, "red", "black"),background = ifelse(!tableFilter$Vacuna%in%lowVacu,"yellow","white"))
+
+tableFilter$Vacuna40 = cell_spec(tableFilter$Vacuna40,
+                                 bold =ifelse(tableFilter$Vacuna40 %in%lowVacu, T, F),
+                              color = ifelse(!tableFilter$Vacuna40 %in%lowVacu, "red", "black"),background = ifelse(tableFilter$Vacuna40%in%lowVacu,"yellow","white"))
+
+tableFilter$Mortalidad = cell_spec(tableFilter$Mortalidad,bold = ifelse(!tableFilter$Mortalidad %in%c("Afectada"), T, F),
+                              color = ifelse(!tableFilter$Mortalidad %in%c("No Afectada"), "red", "black"),
+                              background = ifelse(!tableFilter$Mortalidad %in%c("No Afectada"),"yellow","white"))
+
+weekWorse=as.character(3:7)
+#names(table(tableFilter$Incid))
+badinci=c("21-50","51-150",">150")
+tableFilter$Incid = cell_spec(tableFilter$Incid,bold = ifelse(tableFilter$Incid %in%badinci, T, F),
+                               color = ifelse(tableFilter$Incid %in%badinci, "red", "black"),
+                               background = ifelse(tableFilter$Incid %in%badinci,"yellow","white"))
+
+weekWorse=as.character(3:7)
+tableFilter$Subida_Incid = cell_spec(tableFilter$Subida_Incid,bold = ifelse(tableFilter$Subida_Incid %in%weekWorse, T, F),
+                               color = ifelse(tableFilter$Subida_Incid %in%weekWorse, "red", "black"),
+                               background = ifelse(tableFilter$Subida_Incid %in%weekWorse,"yellow","white"))
+
+
+names(tableFilter)[c(4,5,6,8,9,10)]=c("Casos/cienmil","Casos/cienmil (semanas)","SubeHospital","Oxig","Vacunacion","Vacunacion (>40 años)")
+
+tableFilter=tableFilter[,c(2,1,4,5,7,9,10)]
+
+tableFilter=tableFilter[order(tableFilter$DEPARTAMENTO,tableFilter$PROVINCIA),]
+
+kbl(tableFilter,  escape = F,position = 'h',longtable = T) %>%
+kable_styling(font_size = 5)
+# %>%
+# kable_paper("striped", full_width = F)
+```
+
+* **NOTAS**: 
+
+- _Casos/cienmil (semanas)_ indica semanas en que la tasa sube (+) o baja (-).
+- _Sin Información_ indica que esa provincia NO tiene información de esa variable ( o no reporta, o no tiene ese servicio.)
+
+
+
+

@@ -1,0 +1,608 @@
+---
+title: "Preprocessing"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+poblacion
+
+```{r}
+#reniec=read.csv("TB_PERSONA.csv")
+# #names(reniec)
+# ubis=rio::import("TB_UBIGEOS.xlsx",skip=1)
+# reniec=reniec[reniec$fecha_fallecido=="",]
+# ubis=ubis[,c("id_ubigeo","provincia")]
+# names(reniec)[4]="id_ubigeo"
+# reniec=reniec[!is.na(reniec$id_ubigeo),]
+# reniec=merge(reniec,ubis)
+# 
+# reniec$edad=2021-reniec$anho_nac
+# reniec=reniec[,c("id_persona","provincia","edad","sexo")]
+# names(reniec)=toupper(names(reniec))
+# saveRDS(reniec,file = "reniec.rds")
+# 
+# reniec$conteo=1
+# edadProvs=aggregate(data=reniec,conteo~PROVINCIA,sum)
+# mas39=rio::import("de40mas.xlsx")
+# 
+# edadProvs=merge(edadProvs,mas39)
+# names(edadProvs)[c(2,3)]=c("total","total40")
+# saveRDS(edadProvs,file = "edadProvs.rds")
+
+
+```
+
+```{r}
+rm(list = ls())
+options(scipen = 100)
+posi=read.csv("positivos_covid.csv",sep = ";")
+poblacion=rio::import("edadProvs.rds")
+names(posi) =toupper(names(posi))
+posi=posi[!startsWith(posi$PROVINCIA,"EN INVESTI"),]
+#table(posi$PROVINCIA)
+posi$PROVINCIA=gsub("Ã\u0091","Ñ",posi$PROVINCIA,fixed = T) 
+
+#posi[posi$PROVINCIA=="LIMA","DEPARTAMENTO"]="LIMA MET"
+posi$FECHA_RESULTADO=as.Date(as.character(posi$FECHA_RESULTADO),format="%Y%m%d")
+posi=posi[complete.cases(posi$FECHA_RESULTADO),]
+posi[posi$PROVINCIA=="ANTONIO RAIMONDI","PROVINCIA"]="ANTONIO RAYMONDI"
+```
+
+
+
+```{r, echo=FALSE}
+library(dplyr)
+library(magrittr)
+posi$casos_nuevos=1
+posi$year=lubridate::epiyear(posi$FECHA_RESULTADO)
+posi$week=lubridate::epiweek(posi$FECHA_RESULTADO)
+
+current_week=max(posi[posi$FECHA_RESULTADO==max(posi$FECHA_RESULTADO),"week"])
+keepWeeks=(current_week-8):(current_week-1)
+posi=posi[posi$year==max(posi$year) & posi$week%in%keepWeeks,]
+
+
+posiAll=aggregate(data=posi[posi$METODODX!="PR",],casos_nuevos~PROVINCIA+year+week,sum)
+posiAll=reshape2::dcast(posiAll,  PROVINCIA  ~ week,value.var = "casos_nuevos")
+
+posiAll[is.na(posiAll)]=0
+posiAll=reshape2::melt(posiAll, id.vars=c("PROVINCIA"))
+names(posiAll)[c(2,3)]=c("semana","casos_nuevos")
+
+#setdiff(posiAll$PROVINCIA,poblacion$PROVINCIA)
+
+posiAll=merge(posiAll,poblacion)
+
+posiAll$incid=100000*posiAll$casos_nuevos/posiAll$total
+
+names(posiAll)[c(4,5)]=c("poblacion","poblacion_40mas")
+
+saveRDS(posiAll,"inci_provs_serie.rds")
+
+posiAllwide=reshape2::dcast(posiAll,  PROVINCIA  ~ semana,value.var = "incid")
+
+
+#posiAllwide[is.na(posiAllwide)]=0
+last=ncol(posiAllwide)
+
+posiAllwide$incidenciaActual=posiAllwide[,last]
+# posiAllwide$incidenciaActual=tidyr::replace_na(posiAllwide$incidenciaActual, -1)
+posiAllwide$incidenciaActual=cut(posiAllwide$incidenciaActual,
+                         breaks = c(0,20,50,150,max(posiAllwide$incidenciaActual,na.rm = T)),
+                         labels = c("<=20","21-50","51-150",">150"),ordered_result = T,include.lowest = T)
+
+
+
+#### maga funcion! :)
+
+sequence<-function(x){paste(as.character(ifelse(is.na(as.numeric(diff(x)>0)),0,as.numeric(diff(x)>0))),collapse = '')}
+
+# x=c(175.419362,153.491942,339.875014,460.4758250,449.5121149,208.310492,131.5645214,109.637101)
+# sequence(x)
+
+#####
+posiAllwide$up=apply(posiAllwide[,2:last],1,sequence)
+
+posiAllwide$subidas=0
+posiAllwide$subidas=ifelse(endsWith(posiAllwide$up,"1"),1,posiAllwide$subidas)
+posiAllwide$subidas=ifelse(endsWith(posiAllwide$up,"11"),2,posiAllwide$subidas)
+posiAllwide$subidas=ifelse(endsWith(posiAllwide$up,"111"),3,posiAllwide$subidas)
+posiAllwide$subidas=ifelse(endsWith(posiAllwide$up,"1111"),4,posiAllwide$subidas)
+posiAllwide$subidas=ifelse(endsWith(posiAllwide$up,"11111"),5,posiAllwide$subidas)
+posiAllwide$subidas=ifelse(endsWith(posiAllwide$up,"111111"),6,posiAllwide$subidas)
+posiAllwide$subidas=ifelse(endsWith(posiAllwide$up,"1111111"),7,posiAllwide$subidas)
+
+posiAllwide$subidas=ifelse(endsWith(posiAllwide$up,"0"),-1,posiAllwide$subidas)
+posiAllwide$subidas=ifelse(endsWith(posiAllwide$up,"00"),-2,posiAllwide$subidas)
+posiAllwide$subidas=ifelse(endsWith(posiAllwide$up,"000"),-3,posiAllwide$subidas)
+posiAllwide$subidas=ifelse(endsWith(posiAllwide$up,"0000"),-4,posiAllwide$subidas)
+posiAllwide$subidas=ifelse(endsWith(posiAllwide$up,"00000"),-5,posiAllwide$subidas)
+posiAllwide$subidas=ifelse(endsWith(posiAllwide$up,"000000"),-6,posiAllwide$subidas)
+posiAllwide$subidas=ifelse(endsWith(posiAllwide$up,"0000000"),-7,posiAllwide$subidas)
+
+
+
+
+inciup=merge(poblacion,posiAllwide[,c(1,10,12)],all=T)
+inciup$incidenciaActual=as.character(inciup$incidenciaActual)
+
+
+inciup$incidenciaActual=tidyr::replace_na(inciup$incidenciaActual,"Sin Información")
+
+inciup$incidenciaActual=factor(inciup$incidenciaActual, 
+       levels = c("Sin Información","<=20","21-50","51-150",">150"),ordered = T)
+
+
+inciup$subidas=tidyr::replace_na(inciup$subidas,"Sin Información")
+
+
+
+names(inciup)[c(2,3)]=c("Poblacion","Poblacion40mas")
+saveRDS(inciup,file = "inci_provs.rds")
+
+```
+
+
+```{r}
+rm(list=ls())
+poblaProv=rio::import("edadProvs.rds")
+vacu=read.csv("vacunas_covid.csv",as.is = T,encoding="UTF-8")
+
+vacu[vacu$PROVINCIA=="SAN ROMAS",'PROVINCIA']="SAN ROMAN"
+vacu$FECHA_VACUNACION=as.Date(as.character(vacu$FECHA_VACUNACION),format="%Y%m%d")
+#"EDAD","FECHA_VACUNACION",
+#only=c("UUID","DOSIS","DEPARTAMENTO","PROVINCIA")
+only=c("UUID","EDAD","DOSIS","DEPARTAMENTO","PROVINCIA","FECHA_VACUNACION")
+vacu=vacu[,only]
+
+dosis1=vacu[vacu$DOSIS==1,]
+dosis2=vacu[vacu$DOSIS==2,]
+
+names(dosis2)=paste0(names(dosis2),"_2")
+
+dosis=merge(dosis1,dosis2,by.x = "UUID",by.y = "UUID_2", all= T)
+rm(vacu);rm(dosis1);
+
+reniec=readRDS("reniec.rds")
+
+names(reniec)=paste0(names(reniec),"_reniec")
+dosis=merge(dosis,reniec,all.x = T, by.x = "UUID",by.y ="ID_PERSONA_reniec" )
+rm(reniec)
+dosis=dosis[!is.na(dosis$DOSIS_2),]
+saveRDS(dosis,"dosisVacFull.rds")
+
+dosis=dosis[!is.na(dosis$PROVINCIA_reniec),]
+
+# dosis=dosis[abs(dosis$EDAD-dosis$EDAD_2)<=1,]
+# dosis$EDAD=apply(dosis[,c("EDAD","EDAD_2")],1,max)
+
+
+
+#only2=c("DEPARTAMENTO","PROVINCIA","DOSIS")
+only2=c("PROVINCIA","PROVINCIA_2","PROVINCIA_reniec","DOSIS","EDAD_reniec","FECHA_VACUNACION","FECHA_VACUNACION_2","SEXO_reniec")
+#names(dosis)
+dosis=dosis[,only2]
+dosis$mas39=0
+#summary(dosis$EDAD_reniec)
+dosis$mas39=ifelse(dosis$EDAD_reniec>=40,1,dosis$mas39)
+tablaDosis=aggregate(data=dosis,cbind(DOSIS,mas39)~PROVINCIA,sum)
+names(tablaDosis)[c(2,3)]=c("vacs_todos","vacs_40mas")
+# setdiff(unique(dosis$PROVINCIA),poblaProv$PROVINCIA)
+vacunaProv=merge(poblaProv,tablaDosis,all = T)
+
+#vacunaProv[is.na(vacunaProv$DOSIS),"DOSIS"]=0
+
+vacunaProv$cobertura_vac=100*vacunaProv$vacs_todos/vacunaProv$total
+#summary(vacunaProv$cobertura_vac)
+labs=c("<=10","11-20","21-40","41-50","51-70",">70")
+vacunaProv$cobertura_vac=cut(vacunaProv$cobertura_vac,c(0,10,20,40,50,70,200),
+                     labels = labs,
+                     include.lowest = T,ordered_result = T)
+table(vacunaProv$cobertura_vac)
+#mas39=rio::import("de40mas.xlsx")
+#setdiff(vacunaProv$PROVINCIA,mas39$PROVINCIA)
+#vacunaProv=merge(vacunaProv,mas39)
+
+vacunaProv$cobertura_vac40mas=100*vacunaProv$vacs_40mas/vacunaProv$total40
+#summary(vacunaProv$cobertura_vac40mas)
+
+vacunaProv$cobertura_vac40mas=cut(vacunaProv$cobertura_vac40mas,c(0,10,20,40,50,70,200),
+                     labels = labs,
+                     include.lowest = T,ordered_result = T)
+#table(vacunaProv$cobertura_vac)
+#names(vacunaProv)
+somevacu=c("PROVINCIA","cobertura_vac","cobertura_vac40mas")
+vacunaProv=vacunaProv[,somevacu]
+saveRDS(vacunaProv,"vacunaProv.rds")
+rm(dosis);rm(tablaDosis)
+```
+
+```{r}
+rm(list=ls())
+poblaProv=rio::import("edadProvs.rds")
+o2=read.csv("data_oxigeno.csv",sep = ";")
+#o2=read.csv("Oxigeno_25-10-2021.csv",sep = "|")
+#names(o2)
+                      
+demo=c("FECHAREGISTRO","CODIGO","NOMBRE","INSTITUCIÓN","GRUPO","REGION","PROVINCIA","DISTRITO" )
+dispo=c("CIL_VOL_DISP_M3_DU24","PLAN_OPER_PROD_DIA_M3","TAN_OPER_CONT_INI_DIA_M3","TAN_OPER_CANT_REC_DIA_M3","CON_PROM_PROD_DIA_ANT")
+consu=c("CIL_VOL_M3_CU24","PLAN_OPER_CONS_DIA_M3","TAN_OPER_CONS_MEN_TRANSF_M3","CON_PROM_PROD_DIA_ANT")
+
+o2=o2[,c(demo,dispo,consu)]
+
+o2$FECHAREGISTRO=as.Date(o2$FECHAREGISTRO,format = "%d-%m-%Y")
+
+
+o2$disponible=apply(o2[,dispo],1,sum,na.rm=T)
+o2$consumo=apply(o2[,consu],1,sum,na.rm=T)
+
+o2$dias_disponible=((o2$disponible-o2$consumo)/(o2$consumo))%>%round(2)
+new=c("disponible","consumo","dias_disponible")
+o2=o2[,c(demo,new)]
+
+
+o2all=o2 %>% 
+  group_by(CODIGO) %>%
+  slice(which.max(FECHAREGISTRO))
+
+o2all$semanas_retraso=lubridate::week(o2all$FECHAREGISTRO)
+o2all$semanas_retraso=max(o2all$semanas_retraso,na.rm = T)-o2all$semanas_retraso
+
+#summary(o2all$dias_disponible)
+o2all$semaforo2=5
+o2all$semaforo2=ifelse(o2all$dias_disponible<=3,1,o2all$semaforo2)
+o2all$semaforo2=ifelse(o2all$dias_disponible>3,2,o2all$semaforo2)
+
+o2all$semaforo2=ifelse(o2all$dias_disponible>7,3,o2all$semaforo2)
+o2all$semaforo2=ifelse(o2all$dias_disponible>14,4,o2all$semaforo2)
+o2all$semaforo2=ifelse(is.infinite(o2all$dias_disponible),5,o2all$semaforo2)
+o2all$semaforo2=ifelse(is.nan(o2all$dias_disponible) | o2all$dias_disponible<=0,0,o2all$semaforo2)
+
+
+
+
+o2all$semaforo2=factor(o2all$semaforo2,
+                   levels = 0:5,
+                   labels = c("Sin O2",
+                              "Menos de 3 dias",
+                              "3 a 7 dias",
+                              "8 a 14 dias",
+                              "2 semanas o mas",
+                              "No Demandan O2"),ordered = T)
+
+
+saveRDS(o2all,file = "o2all.rds")
+
+o2ok=o2all[o2all$semanas_retraso<2,]
+o2ok=o2ok[!is.na(o2ok$semanas_retraso),]
+
+tablao2=aggregate(data=o2ok,cbind(disponible,consumo)~PROVINCIA,sum)
+
+tablao2$dias_disponible=(tablao2$disponible-tablao2$consumo)/(tablao2$consumo)
+
+
+
+tablao2$semaforo2=5
+tablao2$semaforo2=ifelse(tablao2$dias_disponible<=3,1,tablao2$semaforo2)
+tablao2$semaforo2=ifelse(tablao2$dias_disponible>3,2,tablao2$semaforo2)
+
+tablao2$semaforo2=ifelse(tablao2$dias_disponible>7,3,tablao2$semaforo2)
+tablao2$semaforo2=ifelse(tablao2$dias_disponible>14,4,tablao2$semaforo2)
+tablao2$semaforo2=ifelse(is.infinite(tablao2$dias_disponible),5,tablao2$semaforo2)
+tablao2$semaforo2=ifelse(is.nan(tablao2$dias_disponible) | tablao2$dias_disponible<=0,0,tablao2$semaforo2)
+
+
+
+
+tablao2$semaforo2=factor(tablao2$semaforo2,
+                   levels = 0:6,
+                   labels = c("Sin O2",
+                              "Menos de 3 dias",
+                              "3 a 7 dias",
+                              "8 a 14 dias",
+                              "2 semanas o mas",
+                              "No Demandan O2",
+                              "Sin Información"),ordered = T)
+
+
+#levels(tablao2$semaforo2)
+
+#setdiff(tablao2$PROVINCIA,poblaProv$PROVINCIA)
+#names(tablao2)
+someo2=c("PROVINCIA","semaforo2")
+oxiProv=merge(poblaProv,tablao2[,someo2],all = T)
+
+oxiProv[is.na(oxiProv$semaforo2),"semaforo2"]="Sin Información"
+saveRDS(oxiProv[,c(1,4)],"oxiProv.rds")
+
+```
+
+
+```{r}
+library(magrittr)
+poblaProv=rio::import("edadProvs.rds")
+beds=read.csv("Camas-25_12_2021.csv",sep = "|")
+#names(beds)
+select=c("FECHAREGISTRO","CODIGO","NOMBRE","INSTITUCIÓN","GRUPO","REGION","PROVINCIA","DISTRITO","CUENTA_ZC","ZNC_HOSP_ADUL_CAM_OPERATIVO","ZNC_HOSP_ADUL_CAM_DISPONIBLE","ZNC_HOSP_ADUL_CAM_OCUPADO")  
+#str(beds)
+beds$FECHAREGISTRO=as.Date(beds$FECHAREGISTRO)
+beds=beds[,select]
+beds=beds[beds$CUENTA_ZC=="SI",]
+beds=beds[beds$GRUPO=="PÚBLICOS",]
+
+
+#aggregate(data=beds, cbind(ZNC_HOSP_ADUL_CAM_OPERATIVO, ZNC_HOSP_ADUL_CAM_DISPONIBLE) ~PROVINCIA,sum)
+
+
+beds=beds %>% 
+  dplyr::group_by(CODIGO) %>%
+  dplyr::slice(which.max(FECHAREGISTRO))
+
+beds$semanas_retraso=lubridate::week(beds$FECHAREGISTRO)
+beds$semanas_retraso=max(beds$semanas_retraso,na.rm = T)-beds$semanas_retraso
+
+
+saveRDS(beds,file="beds.rds")
+
+bedsok=beds[beds$semanas_retraso<2,]
+bedsok=aggregate(data=bedsok, cbind(ZNC_HOSP_ADUL_CAM_OPERATIVO, ZNC_HOSP_ADUL_CAM_DISPONIBLE) ~PROVINCIA,sum)
+
+bedsok$camas_disponibles=100*bedsok$ZNC_HOSP_ADUL_CAM_DISPONIBLE/bedsok$ZNC_HOSP_ADUL_CAM_OPERATIVO
+bedsok=bedsok[,c("PROVINCIA","camas_disponibles")]
+#setdiff(bedsok$PROVINCIA,poblaProv$PROVINCIA)
+bedsok=merge(poblaProv,bedsok,all = T)
+
+
+bedsok$semaforobed=2
+bedsok[is.na(bedsok$camas_disponibles),"semaforobed"]=1
+bedsok$semaforobed=ifelse(bedsok$camas_disponibles>=50 & !is.na(bedsok$camas_disponibles),3,bedsok$semaforobed)
+
+bedsok$semaforobed=factor(bedsok$semaforobed,
+                   levels = 1:3,
+                   labels = c("SIN camas COVID",
+                              "50pct o Menos",
+                              "Más de 50pct"),ordered = T)
+saveRDS(bedsok[,c(1,5)],"bedsProv.rds")
+```
+
+
+
+
+
+```{r}
+rm(list = ls())
+sina=rio::import("SINADEF_DATOS_ABIERTOS.xlsx")
+names(sina)=gsub(" ","_",names(sina))
+
+sinaProv=sina[!sina$PROVINCIA_DOMICILIO%in%c('EXTRANJERO',"SIN REGISTRO","ARICA"),]
+sinakids=sinaProv[,c(3,4,5,10,11,12,13,14,18)]
+
+sinakids=sinakids[sinakids$TIEMPO_EDAD=="AÑOS",]
+
+sinakids=sinakids[!is.na(as.numeric(sinakids$EDAD)),]
+sinakids$EDAD=as.numeric(sinakids$EDAD)
+
+#table(sinakids$EDAD)
+sinakids=sinakids[sinakids$EDAD<18,]
+sinakids=sinakids[sinakids$EDAD>4,]
+
+#table(sinakids$MUERTE_VIOLENTA,sinakids$AÑO)
+saveRDS(sinakids,file = "sinakids.rds")
+sinakids=readRDS("sinakids.rds")
+sinaProv=sinaProv[,c(10,11,12,13,14,18)]
+
+sinaProv[sinaProv$PROVINCIA_DOMICILIO=="CORONEL PORTILLO" & !is.na(sinaProv$PROVINCIA_DOMICILIO),"DEPARTAMENTO_DOMICILIO"]="UCAYALI"
+sinaProv[sinaProv$PROVINCIA_DOMICILIO=="ANTONIO RAIMONDI"& !is.na(sinaProv$PROVINCIA_DOMICILIO),"PROVINCIA_DOMICILIO"]="ANTONIO RAYMONDI"
+
+sinaProv=sinaProv[sinaProv$MUERTE_VIOLENTA%in% c("NO SE CONOCE","SIN REGISTRO"),]
+sinaProv$`MUERTE VIOLENTA`=NULL
+sinaProv$count=1
+
+sinaProv=aggregate(data=sinaProv,
+                   count~DEPARTAMENTO_DOMICILIO + PROVINCIA_DOMICILIO +AÑO,sum)
+
+
+
+sinaProv=reshape2::dcast(sinaProv, DEPARTAMENTO_DOMICILIO + PROVINCIA_DOMICILIO ~ AÑO,value.var = "count")
+
+sinaProv$precovidMax=apply(sinaProv[,c(3:5)],1,max)
+
+sinaProv$covidMax=apply(sinaProv[,c(6:7)],1,max)
+
+sinaProv$Exceso=sinaProv$covidMax/sinaProv$precovidMax
+
+sinaProv$Exceso=ifelse(sinaProv$Exceso>1.5,1,0)
+
+
+
+sinaProv=sinaProv[,c(1,2,10)]
+names(sinaProv)[c(1,2)]=c("DEPARTAMENTO","PROVINCIA")
+
+falles=read.csv("fallecidos_covid.csv", sep = ";")
+
+falles$FECHA_FALLECIMIENTO=as.Date(as.character(falles$FECHA_FALLECIMIENTO),format = "%Y%m%d")
+falles$PROVINCIA=gsub("Ã\u0091","Ñ",falles$PROVINCIA,fixed = T)
+falles=falles[falles$PROVINCIA!="",]
+falles[falles$PROVINCIA=="ANTONIO RAIMONDI","PROVINCIA"]="ANTONIO RAYMONDI"
+
+
+poblacion=readRDS("edadProvs.rds")
+
+falles$fallecidos=1
+fallesProv=aggregate(data=falles,fallecidos~PROVINCIA,sum)
+fallesProv=merge(fallesProv,poblacion,all = T)
+fallesProv$tasafalle=fallesProv$fallecidos/fallesProv$total
+fallesProv=fallesProv[order(-fallesProv$fallecidos),]
+row.names(fallesProv)=NULL
+cutPoint=quantile(fallesProv$tasafalle,0.80)
+fallesProv$altaMortalidad=ifelse(fallesProv$tasafalle>=cutPoint,1,0)
+
+fallesProv$acumfalle=cumsum(fallesProv$fallecidos)
+fallesProv$acumfalle=fallesProv$acumfalle/sum(fallesProv$fallecidos)
+fallesProv$flagsum=ifelse(fallesProv$acumfalle<=0.80,1,0)
+mortalidadProv=merge(fallesProv[,c(1,6,8)],sinaProv,by="PROVINCIA")
+
+mortalidadProv$mortalidadAlta=apply(mortalidadProv[,-c(1,4)],1,sum)
+mortalidadProv$mortalidadAlta=ifelse(mortalidadProv$mortalidadAlta>0,"Afectada","No Afectada")
+
+saveRDS(mortalidadProv[,c("DEPARTAMENTO","PROVINCIA","mortalidadAlta")],"mortalidadProv.rds")
+```
+
+
+```{r}
+hosp=read.csv("TB_HOSP_VAC_FALLECIDOS.csv")
+
+hosp$fecha_ingreso_hosp=as.Date(hosp$fecha_ingreso_hosp,format="%d/%m/%Y")
+
+hosp$fecha_segumiento_hosp_ultimo=as.Date(hosp$fecha_segumiento_hosp_ultimo,format="%d/%m/%Y")
+
+
+hosp$cdc_fecha_fallecido_covid=as.Date(hosp$cdc_fecha_fallecido_covid,format="%d/%m/%Y")
+
+hosp$covid=hosp$cdc_fallecido_covid + hosp$cdc_positividad
+hosp$covid=ifelse(hosp$covid>0,1,0)
+
+
+hosp$fecha_ingreso_uci=as.Date(hosp$fecha_ingreso_uci,format="%d/%m/%Y")
+
+hosp$fecha_ingreso_ucin=as.Date(hosp$fecha_ingreso_ucin,format="%d/%m/%Y")
+
+some=18:21
+
+hosp[hosp$fecha_dosis1=="","fecha_dosis1"]=NA
+hosp[hosp$fecha_dosis2=="","fecha_dosis2"]=NA
+hosp[hosp$fabricante_dosis1=="","fabricante_dosis1"]=NA
+hosp[hosp$fabricante_dosis2=="","fabricante_dosis2"]=NA
+hosp[hosp$prov_domicilio=="","prov_domicilio"]=NA
+
+saveRDS(hosp,file = "hosp.rds")
+
+hospCovid=hosp[hosp$covid==1,]
+hospCovid$semana=lubridate::week(hospCovid$fecha_ingreso_hosp)
+hospCovid$year=lubridate::year(hospCovid$fecha_ingreso_hosp)
+
+current_week=max(hospCovid[hospCovid$fecha_ingreso_hosp==max(hospCovid$fecha_ingreso_hosp),"semana"])
+keepWeeks=(current_week-8):(current_week-1)
+hospCovid=hospCovid[hospCovid$year==max(hospCovid$year) & hospCovid$semana%in%keepWeeks,]
+
+
+
+hosprov=aggregate(data=hospCovid,covid~prov_domicilio+semana,sum)
+names(hosprov)[1]="PROVINCIA"
+
+
+
+hosprov=reshape2::dcast(hosprov,  PROVINCIA  ~ semana,value.var = "covid")
+
+hosprov[is.na(hosprov)]=0
+hosprov=reshape2::melt(hosprov, id.vars=c("PROVINCIA"))
+names(hosprov)[c(2,3)]=c("semana","hosp_nuevos")
+
+#setdiff(posiAll$PROVINCIA,poblacion$PROVINCIA)
+
+
+
+saveRDS(hosprov,"hosprov_serie.rds")
+poblacion=readRDS("edadProvs.rds")
+
+
+hosprov=reshape2::dcast(hosprov,  PROVINCIA  ~ semana,value.var = "hosp_nuevos")
+
+hosprov[is.na(hosprov)]=0
+last=ncol(hosprov)
+
+
+#### maga funcion! :)
+
+sequence<-function(x){paste(as.character(ifelse(is.na(as.numeric(diff(x)>0)),0,as.numeric(diff(x)>0))),collapse = '')}
+#x=c(0,0,0,0)
+# x=c(175.419362,153.491942,339.875014,460.4758250,449.5121149,208.310492,131.5645214,109.637101)
+# sequence(x)
+
+#####
+hosprov$up=apply(hosprov[,2:last],1,sequence)
+
+hosprov$hosp_subidas=0
+hosprov$hosp_subidas=ifelse(endsWith(hosprov$up,"1"),1,hosprov$hosp_subidas)
+hosprov$hosp_subidas=ifelse(endsWith(hosprov$up,"11"),2,hosprov$hosp_subidas)
+hosprov$hosp_subidas=ifelse(endsWith(hosprov$up,"111"),3,hosprov$hosp_subidas)
+hosprov$hosp_subidas=ifelse(endsWith(hosprov$up,"1111"),4,hosprov$hosp_subidas)
+hosprov$hosp_subidas=ifelse(endsWith(hosprov$up,"11111"),5,hosprov$hosp_subidas)
+hosprov$hosp_subidas=ifelse(endsWith(hosprov$up,"111111"),6,hosprov$hosp_subidas)
+hosprov$hosp_subidas=ifelse(endsWith(hosprov$up,"1111111"),7,hosprov$hosp_subidas)
+
+hosprov$hosp_subidas=ifelse(endsWith(hosprov$up,"0"),-1,hosprov$hosp_subidas)
+hosprov$hosp_subidas=ifelse(endsWith(hosprov$up,"00"),-2,hosprov$hosp_subidas)
+hosprov$hosp_subidas=ifelse(endsWith(hosprov$up,"000"),-3,hosprov$hosp_subidas)
+hosprov$hosp_subidas=ifelse(endsWith(hosprov$up,"0000"),-4,hosprov$hosp_subidas)
+hosprov$hosp_subidas=ifelse(endsWith(hosprov$up,"00000"),-5,hosprov$hosp_subidas)
+hosprov$hosp_subidas=ifelse(endsWith(hosprov$up,"000000"),-6,hosprov$hosp_subidas)
+hosprov$hosp_subidas=ifelse(endsWith(hosprov$up,"0000000"),-7,hosprov$hosp_subidas)
+
+
+
+
+hosprov=merge(poblacion,hosprov[,c(1,11)],all=T)
+
+hosprov$hosp_subidas=tidyr::replace_na(hosprov$hosp_subidas,"Sin Información")
+
+
+
+
+saveRDS(hosprov[,c(1,4)],file = "hosprov.rds")
+
+
+```
+
+```{r}
+rm(list = ls())
+mortalidadProv=readRDS("mortalidadProv.rds")
+inciup=readRDS("inci_provs.rds")
+camaProv=readRDS("bedsProv.rds")
+oxiProv=readRDS("oxiProv.rds")
+vacunaProv=readRDS("vacunaProv.rds")
+hosp=readRDS("hosprov.rds")
+
+
+vacuOxCamInci=merge(camaProv,inciup)
+vacuOxCamInci=merge(vacuOxCamInci,hosp)
+
+
+vacuOxCamInci=merge(vacuOxCamInci,mortalidadProv)
+
+vacuOxCamInci=merge(vacuOxCamInci,oxiProv)
+vacuOxCamInci=merge(vacuOxCamInci,vacunaProv)
+vacuOxCamInci$total=NULL
+vacuOxCamInci$Poblacion=NULL
+vacuOxCamInci$Poblacion40mas=NULL
+
+
+
+# vacuOxCamInci[is.na(vacuOxCamInci$incidenciaActual),"incidenciaActual"]="Sin_Información"
+# 
+# vacuOxCamInci[is.na(vacuOxCamInci$subidas),"subidas"]="Sin_Información"
+
+#vacuOxCamInci[is.na(vacuOxCamInci$semaforo2),"semaforo2"]="NO Ofrece O2"
+
+
+orden=c("PROVINCIA","DEPARTAMENTO","semaforobed","incidenciaActual","subidas","hosp_subidas","mortalidadAlta","semaforo2","cobertura_vac","cobertura_vac40mas")
+vacuOxCamInci=vacuOxCamInci[,orden]
+
+names(vacuOxCamInci)[3:10]= c("Camas","Incid","Subida_Incid","Subidas_Hospi","Mortalidad","O2","Vacuna","Vacuna40")
+
+
+saveRDS(vacuOxCamInci,"vacuOxCamInci.rds")
+rio::export(vacuOxCamInci, "vacuOxCamInci.xlsx")
+write.csv(vacuOxCamInci,"vacuOxCamInci.csv",row.names = F)
+
+#posiAll=readRDS("inci_provs_serie.rds")
+#hospiAll=readRDS("hosprov_serie.rds")
+```
+
+
+
+
+
+
